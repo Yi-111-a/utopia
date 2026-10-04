@@ -1064,6 +1064,16 @@ fn pptx_xml_to_text(xml: &str) -> anyhow::Result<String> {
         matches!(attr(e, name).as_deref(), Some("1" | "true" | "on"))
     }
 
+    // gridSpan/hMerge/vMerge 是 a:tc 自己的属性（DrawingML 的 CT_TableCell），
+    // 不是 a:tcPr 的属性；放错位置的合并单元格以前因此被当成普通格。
+    let apply_merge_attrs = |e: &quick_xml::events::BytesStart<'_>, c: &mut TableCell| {
+        if let Some(span) = attr(e, "gridSpan").and_then(|v| v.parse().ok()) {
+            c.span = span;
+        }
+        c.horizontal_merge = truthy(e, "hMerge");
+        c.vertical_merge = truthy(e, "vMerge");
+    };
+
     let mut reader = Reader::from_str(xml);
     let mut out = String::new();
     let mut in_text = false;
@@ -1089,19 +1099,12 @@ fn pptx_xml_to_text(xml: &str) -> anyhow::Result<String> {
                 }
                 "a:tr" if table_depth == 1 => row.clear(),
                 "a:tc" if table_depth == 1 => {
-                    cell = Some(TableCell {
+                    let mut c = TableCell {
                         span: 1,
                         ..TableCell::default()
-                    });
-                }
-                "a:tcPr" if table_depth == 1 => {
-                    if let Some(c) = cell.as_mut() {
-                        if let Some(span) = attr(&e, "gridSpan").and_then(|v| v.parse().ok()) {
-                            c.span = span;
-                        }
-                        c.horizontal_merge = truthy(&e, "hMerge");
-                        c.vertical_merge = truthy(&e, "vMerge");
-                    }
+                    };
+                    apply_merge_attrs(&e, &mut c);
+                    cell = Some(c);
                 }
                 "a:t" => {
                     if cell.is_some() || table_depth == 0 {
@@ -1118,15 +1121,6 @@ fn pptx_xml_to_text(xml: &str) -> anyhow::Result<String> {
             Ok(Event::Empty(e)) => match e.name().as_ref() {
                 "a:tblPr" if table_depth == 1 => {
                     first_is_header = truthy(&e, "firstRow");
-                }
-                "a:tcPr" if table_depth == 1 => {
-                    if let Some(c) = cell.as_mut() {
-                        if let Some(span) = attr(&e, "gridSpan").and_then(|v| v.parse().ok()) {
-                            c.span = span;
-                        }
-                        c.horizontal_merge = truthy(&e, "hMerge");
-                        c.vertical_merge = truthy(&e, "vMerge");
-                    }
                 }
                 "a:br" => match cell.as_mut() {
                     Some(c) => c.text.push(' '),

@@ -34,9 +34,11 @@ fn cell(text: &str) -> String {
     cell_with_props(text, "")
 }
 
+// gridSpan/hMerge/vMerge are attributes of a:tc itself, so the merge fixtures put
+// them there rather than on a:tcPr.
 fn cell_with_props(text: &str, props: &str) -> String {
     format!(
-        r#"<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></a:txBody><a:tcPr {props}/></a:tc>"#
+        r#"<a:tc {props}><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc>"#
     )
 }
 
@@ -49,7 +51,7 @@ fn cell_with_paragraphs(paragraphs: &[&str]) -> String {
 }
 
 fn empty_cell(props: &str) -> String {
-    format!(r#"<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p/></a:txBody><a:tcPr {props}/></a:tc>"#)
+    format!(r#"<a:tc {props}><a:txBody><a:bodyPr/><a:lstStyle/><a:p/></a:txBody><a:tcPr/></a:tc>"#)
 }
 
 fn row(cells: &[String]) -> String {
@@ -206,13 +208,41 @@ fn grid_span_and_horizontal_merge_keep_the_grid_shape() {
 }
 
 #[test]
+fn merged_cell_attributes_on_a_tc_preserve_the_grid_shape() {
+    // Spelled out rather than going through the helpers, so this keeps testing a
+    // real producer's markup: PowerPoint writes <a:tc gridSpan="2">.
+    let merged_header = cell("Summary").replacen("<a:tc ", r#"<a:tc gridSpan="2" "#, 1);
+    let covered_cell = empty_cell("").replacen("<a:tc ", r#"<a:tc hMerge="1" "#, 1);
+
+    let text = parse_slide(&table(
+        true,
+        &[
+            row(&[merged_header, covered_cell, cell("Total")]),
+            row(&[cell("Q1"), cell("1,200"), cell("1,350")]),
+        ],
+    ));
+
+    assert!(
+        text.contains("|  | Summary | Total |\n| --- | --- | --- |\n| Q1 | 1,200 | 1,350 |"),
+        "{text}"
+    );
+}
+
+#[test]
 fn a_vertical_merge_continuation_stays_an_empty_cell() {
+    // PowerPoint repeats the merged value in every continuation cell; the grid
+    // convention here is to render the continuation empty, so the cell carries
+    // text that has to be dropped.
     let text = parse_slide(&table(
         true,
         &[
             row(&[cell("Quarter"), cell("Revenue"), cell("YoY")]),
             row(&[cell("Q1"), cell("1,200"), cell("+12%")]),
-            row(&[cell("Q2"), cell("1,350"), empty_cell(r#"vMerge="1""#)]),
+            row(&[
+                cell("Q2"),
+                cell("1,350"),
+                cell_with_props("+12%", r#"vMerge="1""#),
+            ]),
             row(&[cell("Q3"), cell("1,410"), cell("+7%")]),
         ],
     ));
